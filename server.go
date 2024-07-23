@@ -20,7 +20,8 @@ var (
 		Timeout: 20 * time.Second,
 	}
 
-	startedAt = timestamp()
+	startedAt time.Time
+	PROD      = false
 )
 
 func init() {
@@ -36,60 +37,95 @@ func init() {
 	button.Output.Low()
 }
 
-type Button struct {
-	Input   rpio.Pin
-	Output  rpio.Pin
-	Timeout time.Duration
+func durToFloat(d time.Duration) float64 {
+	return float64(d.Milliseconds()) / 1000
+}
 
-	pressed bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.RWMutex
+func floatToDur(d float64) time.Duration {
+	return time.Duration(d*1000) * time.Millisecond
+}
+
+type ButtonPress struct {
+	PressedAt  time.Time `json:"pressed_at"`
+	Elapsed    int       `json:"elapsed"`
+	StartState bool      `json:"start_state"`
+	EndState   bool      `json:"end_state"`
+}
+
+type Button struct {
+	Input           rpio.Pin
+	Output          rpio.Pin
+	Timeout         time.Duration
+	LastButtonPress ButtonPress
+
+	pendingPress ButtonPress
+
+	doneChan chan ButtonPress
+	cancel   context.CancelFunc
+	mu       sync.RWMutex
 }
 
 func (b *Button) IsPressed() bool {
-	return b.pressed
+	return b.doneChan != nil
 }
 
 func (b *Button) IsOn() bool {
 	return b.Input.Read() == rpio.High
 }
 
-func (b *Button) Press(ctx context.Context) (<-chan struct{}, error) {
+func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
 	if b.IsPressed() {
 		return nil, errors.New("button is already pressed")
 	}
 
-	b.ctx, b.cancel = context.WithTimeout(ctx, b.Timeout)
-	fmt.Println("Button Pressed!")
-	b.pressed = true
-
-	go func() {
-		<-b.ctx.Done()
-		fmt.Println(b.ctx.Err())
-		if b.ctx.Err() == context.DeadlineExceeded {
-			b.Release()
-		}
-	}()
-
-	return b.ctx.Done(), nil
-}
-
-func (b *Button) Release() error {
-	if !b.IsPressed() {
-		return errors.New("button is already released")
+	ctx, b.cancel = context.WithTimeout(ctx, b.Timeout)
+	if PROD {
+		b.Output.High()
+	}
+	log.Println("button press")
+	b.doneChan = make(chan ButtonPress, 1)
+	b.pendingPress = ButtonPress{
+		PressedAt:  timestamp(),
+		StartState: b.IsOn(),
 	}
 
-	fmt.Println("Button Released!")
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Println("encountered timeout")
+		}
+		b.Release()
+	}()
+
+	return b.doneChan, nil
+}
+
+func (b *Button) Release() (ButtonPress, error) {
+	if !b.IsPressed() {
+		return ButtonPress{}, errors.New("button is already released")
+	}
+
+	if PROD {
+		b.Output.Low()
+	}
+	elapsed := time.Since(b.pendingPress.PressedAt).Round(time.Millisecond)
+	log.Printf("button release after %s\n", elapsed)
+
+	b.pendingPress.Elapsed = int(elapsed.Milliseconds())
+	b.pendingPress.EndState = b.IsOn()
+	b.LastButtonPress = b.pendingPress
+
+	b.doneChan <- b.LastButtonPress
+	close(b.doneChan)
 	b.cancel()
-	b.pressed = false
-	return nil
+
+	return b.LastButtonPress, nil
 }
 
 type statusResp struct {
-	On        bool       `json:"on"`
-	LastPress *time.Time `json:"last_pressed_at"`
-	StartedAt time.Time  `json:"started_at"`
+	On        bool         `json:"on"`
+	StartedAt time.Time    `json:"started_at"`
+	LastPress *ButtonPress `json:"last_press"`
 }
 
 func timestamp() time.Time {
@@ -97,14 +133,15 @@ func timestamp() time.Time {
 }
 
 func getStatus() statusResp {
-	// lp := &lastPress
-	// if lp.IsZero() {
-	// 	lp = nil
-	// }
+	bp := &button.LastButtonPress
+	if bp.Elapsed == 0 {
+		bp = nil
+	}
+
 	return statusResp{
 		On:        button.IsOn(),
 		StartedAt: startedAt,
-		// LastPress: lp,
+		LastPress: bp,
 	}
 }
 
@@ -114,7 +151,7 @@ func jsonError(w http.ResponseWriter, code int, err error) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"error": err.Error(),
 	})
-
+	log.Printf("caught error: %s", err.Error())
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +169,11 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if dur > button.Timeout {
+			jsonError(w, http.StatusBadRequest, fmt.Errorf("t (%s) cannot be longer than %s", dur, button.Timeout))
+			return
+		}
+
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(r.Context(), dur)
 		defer cancel()
@@ -144,21 +186,22 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if t != "" {
-		<-done
-		http.Redirect(w, r, "/status", http.StatusFound)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(<-done)
 	} else {
 		w.WriteHeader(http.StatusAccepted)
 	}
 }
 
 func handleRelease(w http.ResponseWriter, r *http.Request) {
-	err := button.Release()
+	bp, err := button.Release()
 	if err != nil {
 		jsonError(w, http.StatusTeapot, err)
 		return
 	}
 
-	http.Redirect(w, r, "/status", http.StatusFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bp)
 }
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +215,24 @@ func main() {
 	http.HandleFunc("POST /press", handlePress)
 	http.HandleFunc("POST /release", handleRelease)
 
-	fmt.Println("Ready")
+	http.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		go func() {
+			select {
+			// case <-ctx.Done():
+			// 	fmt.Println("context done", ctx.Err())
+			case <-ctx.Done():
+				fmt.Println("new context done", ctx.Err())
+			}
+		}()
+
+		<-ctx.Done()
+	})
+
+	log.Println("server online")
+	startedAt = timestamp()
 	log.Fatal(http.ListenAndServe(":5000", nil))
 }
