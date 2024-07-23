@@ -45,6 +45,19 @@ func floatToDur(d float64) time.Duration {
 	return time.Duration(d*1000) * time.Millisecond
 }
 
+func timestamp() time.Time {
+	return time.Now().UTC().Round(time.Millisecond)
+}
+
+func jsonError(w http.ResponseWriter, code int, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": err.Error(),
+	})
+	log.Printf("caught error: %s", err.Error())
+}
+
 type ButtonPress struct {
 	PressedAt  time.Time `json:"pressed_at"`
 	Elapsed    int       `json:"elapsed"`
@@ -59,14 +72,14 @@ type Button struct {
 	LastButtonPress ButtonPress
 
 	pendingPress ButtonPress
-
-	doneChan chan ButtonPress
-	cancel   context.CancelFunc
-	mu       sync.RWMutex
+	pressing     bool
+	doneChan     chan ButtonPress
+	cancel       context.CancelFunc
+	mu           sync.RWMutex
 }
 
 func (b *Button) IsPressed() bool {
-	return b.doneChan != nil
+	return b.pressing
 }
 
 func (b *Button) IsOn() bool {
@@ -75,10 +88,11 @@ func (b *Button) IsOn() bool {
 
 func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
 	if b.IsPressed() {
-		return nil, errors.New("button is already pressed")
+		return nil, errors.New("button already pressed")
 	}
 
 	ctx, b.cancel = context.WithTimeout(ctx, b.Timeout)
+	b.pressing = true
 	if PROD {
 		b.Output.High()
 	}
@@ -102,9 +116,10 @@ func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
 
 func (b *Button) Release() (ButtonPress, error) {
 	if !b.IsPressed() {
-		return ButtonPress{}, errors.New("button is already released")
+		return ButtonPress{}, errors.New("button already released")
 	}
 
+	b.pressing = false
 	if PROD {
 		b.Output.Low()
 	}
@@ -123,13 +138,9 @@ func (b *Button) Release() (ButtonPress, error) {
 }
 
 type statusResp struct {
-	On        bool         `json:"on"`
-	StartedAt time.Time    `json:"started_at"`
-	LastPress *ButtonPress `json:"last_press"`
-}
-
-func timestamp() time.Time {
-	return time.Now().UTC().Round(time.Millisecond)
+	On           bool         `json:"on"`
+	RunningSince time.Time    `json:"running_since"`
+	LastPress    *ButtonPress `json:"last_press"`
 }
 
 func getStatus() statusResp {
@@ -139,19 +150,10 @@ func getStatus() statusResp {
 	}
 
 	return statusResp{
-		On:        button.IsOn(),
-		StartedAt: startedAt,
-		LastPress: bp,
+		On:           button.IsOn(),
+		RunningSince: startedAt,
+		LastPress:    bp,
 	}
-}
-
-func jsonError(w http.ResponseWriter, code int, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error": err.Error(),
-	})
-	log.Printf("caught error: %s", err.Error())
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
