@@ -2,16 +2,24 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/stianeikeland/go-rpio/v4"
 )
+
+//go:embed static/*
+var content embed.FS
+
+const PROD = false
 
 var (
 	button = Button{
@@ -21,7 +29,6 @@ var (
 	}
 
 	startedAt time.Time
-	PROD      = false
 )
 
 func init() {
@@ -35,14 +42,6 @@ func init() {
 
 	button.Output.Output()
 	button.Output.Low()
-}
-
-func durToFloat(d time.Duration) float64 {
-	return float64(d.Milliseconds()) / 1000
-}
-
-func floatToDur(d float64) time.Duration {
-	return time.Duration(d*1000) * time.Millisecond
 }
 
 func timestamp() time.Time {
@@ -60,7 +59,7 @@ func jsonError(w http.ResponseWriter, code int, err error) {
 
 type ButtonPress struct {
 	PressedAt  time.Time `json:"pressed_at"`
-	Elapsed    int       `json:"elapsed"`
+	Elapsed    float64   `json:"elapsed"`
 	StartState bool      `json:"start_state"`
 	EndState   bool      `json:"end_state"`
 }
@@ -126,7 +125,7 @@ func (b *Button) Release() (ButtonPress, error) {
 	elapsed := time.Since(b.pendingPress.PressedAt).Round(time.Millisecond)
 	log.Printf("button release after %s\n", elapsed)
 
-	b.pendingPress.Elapsed = int(elapsed.Milliseconds())
+	b.pendingPress.Elapsed = elapsed.Seconds()
 	b.pendingPress.EndState = b.IsOn()
 	b.LastButtonPress = b.pendingPress
 
@@ -137,40 +136,21 @@ func (b *Button) Release() (ButtonPress, error) {
 	return b.LastButtonPress, nil
 }
 
-type statusResp struct {
-	On           bool         `json:"on"`
-	RunningSince time.Time    `json:"running_since"`
-	LastPress    *ButtonPress `json:"last_press"`
-}
-
-func getStatus() statusResp {
-	bp := &button.LastButtonPress
-	if bp.Elapsed == 0 {
-		bp = nil
-	}
-
-	return statusResp{
-		On:           button.IsOn(),
-		RunningSince: startedAt,
-		LastPress:    bp,
-	}
-}
-
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "hello world")
-}
-
 func handlePress(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
-	t := r.URL.Query().Get("t")
+	query := r.URL.Query()
+	t := query.Get("t")
+	wait := query.Has("wait")
 
 	if t != "" {
-		dur, err := time.ParseDuration(t)
+		wait = true
+		seconds, err := strconv.ParseFloat(t, 64)
 		if err != nil {
 			jsonError(w, http.StatusBadRequest, err)
 			return
 		}
 
+		dur := time.Duration(seconds*1000) * time.Millisecond
 		if dur > button.Timeout {
 			jsonError(w, http.StatusBadRequest, fmt.Errorf("t (%s) cannot be longer than %s", dur, button.Timeout))
 			return
@@ -187,7 +167,7 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if t != "" {
+	if wait {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(<-done)
 	} else {
@@ -206,35 +186,46 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(bp)
 }
 
+type statusResp struct {
+	On           bool         `json:"on"`
+	RunningSince time.Time    `json:"running_since"`
+	LastPress    *ButtonPress `json:"last_press"`
+}
+
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(getStatus())
+	bp := &button.LastButtonPress
+	if bp.Elapsed == 0 {
+		bp = nil
+	}
+
+	resp := statusResp{
+		On:           button.IsOn(),
+		RunningSince: startedAt,
+		LastPress:    bp,
+	}
+	json.NewEncoder(w).Encode(resp)
+	log.Println("sent state")
 }
 
 func main() {
-	http.HandleFunc("GET /{$}", handleIndex)
+	global := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Press-Timeout", fmt.Sprintf("%f", button.Timeout.Seconds()))
+		http.DefaultServeMux.ServeHTTP(w, r)
+	}
+
+	sub, err := fs.Sub(content, "static")
+	if err != nil {
+		panic(err)
+	}
+
+	http.Handle("GET /", http.FileServerFS(sub))
 	http.HandleFunc("GET /status", handleStatus)
 	http.HandleFunc("POST /press", handlePress)
 	http.HandleFunc("POST /release", handleRelease)
 
-	http.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-
-		go func() {
-			select {
-			// case <-ctx.Done():
-			// 	fmt.Println("context done", ctx.Err())
-			case <-ctx.Done():
-				fmt.Println("new context done", ctx.Err())
-			}
-		}()
-
-		<-ctx.Done()
-	})
-
 	log.Println("server online")
 	startedAt = timestamp()
-	log.Fatal(http.ListenAndServe(":5000", nil))
+	log.Fatal(http.ListenAndServe(":5000", http.HandlerFunc(global)))
 }

@@ -1,0 +1,80 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+    font-family: "Rubik", sans-serif;
+    font-optical-sizing: auto;
+    font-weight: 20px;
+    font-style: normal;
+    color: white;
+}
+
+.parent {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: 60% 40%;
+    height: calc(100vh - 20px);
+    width: calc(100vw - 20px);
+    gap: 10px;
+    padding: 10px;
+    margin: 10px;
+}
+
+div:not(.parent) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid black;
+    border-radius: 10px;
+    font-size: 3em;
+    transition: background-color 0.3s ease;
+}
+
+#powerbutton {
+    background-color: #f0f0f0;
+    grid-area: 1 / 1 / 2 / 3;
+}
+
+#longpress {
+    background-color: red;
+    grid-area: 2 / 1 / 3 / 2;
+}
+
+#shortpress {
+    background-color: blue;
+    grid-area: 2 / 2 / 3 / 3;
+}
+
+.power-icon {
+    width: 3em;
+    /* Reduced from 100px */
+    height: 3em;
+    /* Reduced from 100px */
+    transition: all 0.3s ease;
+}
+
+.power-icon path {
+    fill: #888;
+    transition: all 0.3s ease;
+}
+
+.power-icon.on path {
+    fill: #00ff00;
+    filter: drop-shadow(0 0 5px #00ff00);
+    /* Reduced shadow size */
+}
+
+.pressed {
+    filter: brightness(0.8);
+}
