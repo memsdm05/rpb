@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -9,8 +11,10 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
-	"sync"
+	"syscall"
 	"time"
 
 	"github.com/stianeikeland/go-rpio/v4"
@@ -19,7 +23,10 @@ import (
 //go:embed static/*
 var content embed.FS
 
-const PROD = false
+const (
+	PASSWORD = "changeme"
+	PROD     = false
+)
 
 var (
 	button = Button{
@@ -54,86 +61,7 @@ func jsonError(w http.ResponseWriter, code int, err error) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"error": err.Error(),
 	})
-	log.Printf("caught error: %s", err.Error())
-}
-
-type ButtonPress struct {
-	PressedAt  time.Time `json:"pressed_at"`
-	Elapsed    float64   `json:"elapsed"`
-	StartState bool      `json:"start_state"`
-	EndState   bool      `json:"end_state"`
-}
-
-type Button struct {
-	Input           rpio.Pin
-	Output          rpio.Pin
-	Timeout         time.Duration
-	LastButtonPress ButtonPress
-
-	pendingPress ButtonPress
-	pressing     bool
-	doneChan     chan ButtonPress
-	cancel       context.CancelFunc
-	mu           sync.RWMutex
-}
-
-func (b *Button) IsPressed() bool {
-	return b.pressing
-}
-
-func (b *Button) IsOn() bool {
-	return b.Input.Read() == rpio.High
-}
-
-func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
-	if b.IsPressed() {
-		return nil, errors.New("button already pressed")
-	}
-
-	ctx, b.cancel = context.WithTimeout(ctx, b.Timeout)
-	b.pressing = true
-	if PROD {
-		b.Output.High()
-	}
-	log.Println("button press")
-	b.doneChan = make(chan ButtonPress, 1)
-	b.pendingPress = ButtonPress{
-		PressedAt:  timestamp(),
-		StartState: b.IsOn(),
-	}
-
-	go func() {
-		<-ctx.Done()
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Println("encountered timeout")
-		}
-		b.Release()
-	}()
-
-	return b.doneChan, nil
-}
-
-func (b *Button) Release() (ButtonPress, error) {
-	if !b.IsPressed() {
-		return ButtonPress{}, errors.New("button already released")
-	}
-
-	b.pressing = false
-	if PROD {
-		b.Output.Low()
-	}
-	elapsed := time.Since(b.pendingPress.PressedAt).Round(time.Millisecond)
-	log.Printf("button release after %s\n", elapsed)
-
-	b.pendingPress.Elapsed = elapsed.Seconds()
-	b.pendingPress.EndState = b.IsOn()
-	b.LastButtonPress = b.pendingPress
-
-	b.doneChan <- b.LastButtonPress
-	close(b.doneChan)
-	b.cancel()
-
-	return b.LastButtonPress, nil
+	log.Printf("Caught error: %s", err.Error())
 }
 
 func handlePress(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +116,7 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 
 type statusResp struct {
 	On           bool         `json:"on"`
+	Pressed      bool         `json:"pressed"`
 	RunningSince time.Time    `json:"running_since"`
 	LastPress    *ButtonPress `json:"last_press"`
 }
@@ -201,18 +130,51 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	resp := statusResp{
 		On:           button.IsOn(),
+		Pressed:      button.IsPressed(),
 		RunningSince: startedAt,
 		LastPress:    bp,
 	}
 	json.NewEncoder(w).Encode(resp)
-	log.Println("sent state")
 }
 
 func main() {
 	global := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Press-Timeout", fmt.Sprintf("%f", button.Timeout.Seconds()))
-		http.DefaultServeMux.ServeHTTP(w, r)
+
+		_, password, ok := r.BasicAuth()
+		if ok {
+			// usernameHash := sha256.Sum256([]byte(username))
+			passwordHash := sha256.Sum256([]byte(password))
+			// expectedUsernameHash := sha256.Sum256([]byte(USERNAME))
+			expectedPasswordHash := sha256.Sum256([]byte(PASSWORD))
+
+			// usernameMatch := (subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1)
+			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
+
+			if passwordMatch {
+				w.Header().Set("Press-Timeout", fmt.Sprintf("%f", button.Timeout.Seconds()))
+				http.DefaultServeMux.ServeHTTP(w, r)
+				return
+			}
+
+		}
+
+		country := r.Header.Get("Cf-Ipcountry")
+		if country == "" {
+			country = "unknown"
+		}
+
+		ip := r.Header.Get("Cf-Connecting-Ip")
+		if ip == "" {
+			ip = r.Header.Get("X-Forwarded-For")
+		}
+		if ip == "" {
+			ip = "unknown ip"
+		}
+
+		log.Printf("Attempted access from %s (%s)\n", ip, country)
+		w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	}
 
 	sub, err := fs.Sub(content, "static")
@@ -220,12 +182,36 @@ func main() {
 		panic(err)
 	}
 
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	srv := &http.Server{
+		Handler: http.HandlerFunc(global),
+		Addr:    ":5000",
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+		log.Println("Stopped serving new connections")
+	}()
+
 	http.Handle("GET /", http.FileServerFS(sub))
 	http.HandleFunc("GET /status", handleStatus)
 	http.HandleFunc("POST /press", handlePress)
 	http.HandleFunc("POST /release", handleRelease)
 
-	log.Println("server online")
+	log.Println("Server online")
 	startedAt = timestamp()
-	log.Fatal(http.ListenAndServe(":5000", http.HandlerFunc(global)))
+
+	<-sigs
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("HTTP shutdown error: %v", err)
+	} else {
+		log.Println("Shutdown complete")
+	}
 }

@@ -3,21 +3,20 @@ const longpress = document.getElementById("longpress");
 const shortpress = document.getElementById("shortpress");
 
 const powerIcon = button.querySelector(".power-icon");
-const base = "https://rpb.8ken.biz";
 var state = false;
 
 async function press() {
-    await fetch(base + "/press", { method: "POST" });
+    await fetch("/press", { method: "POST" });
 }
 
 async function release() {
-    await fetch(base + "/release", { method: "POST" });
+    await fetch("/release", { method: "POST" });
 }
 
 async function sendTimed(obj, time) {
-    await fetch(base + "/release", { method: "POST" });
+    await fetch("/release", { method: "POST" });
     addPressedEffect(obj);
-    await fetch(base + "/press?=" + time + "&wait", { method: "POST" });
+    await fetch("/press\?t=" + time + "&wait", { method: "POST" });
     removePressedEffect(obj);
 }
 
@@ -53,11 +52,16 @@ function register(element, start, end=null) {
 }
 
 register(button, press, release)
-register(longpress, (obj) => sendTimed(obj, 10));
+register(longpress, (obj) => sendTimed(obj, 8));
 register(shortpress, (obj) => sendTimed(obj, 1.5));
 
 setInterval(() => {
-    fetch(base + "/status")
+    fetch("/status")
+        .then((resp) => {
+            if (resp.status != 200)
+                throw new Error("status is not 500")
+            return resp
+        })
         .then((resp) => resp.json())
         .then((data) => {
             if (state != data.on) {
@@ -65,4 +69,5 @@ setInterval(() => {
                 powerIcon.classList.toggle("on", state);
             }
         })
+        .catch(() => _)
 }, 500);
