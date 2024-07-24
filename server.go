@@ -31,7 +31,7 @@ var (
 	argTimeout *time.Duration = flag.Duration("timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
 	argInput   *int           = flag.Int("input", 14, "Pin used for input")
 	argOutput  *int           = flag.Int("output", 15, "Pin used for output")
-	argProd    *bool          = flag.Bool("prod", false, "Tells server to actully activate pins")
+	argProd    *bool          = flag.Bool("prod", false, "Tells server to actually activate pins")
 )
 
 var (
