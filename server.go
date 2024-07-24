@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -23,18 +24,18 @@ import (
 //go:embed static/*
 var content embed.FS
 
-const (
-	PASSWORD = "changeme"
-	PROD     = false
+var (
+	argUser    *string        = flag.String("user", "", "Login user")
+	argSecret  *string        = flag.String("secret", "", "Login password (required)")
+	argAddr    *string        = flag.String("addr", ":5000", "Address to bind to")
+	argTimeout *time.Duration = flag.Duration("timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
+	argInput   *int           = flag.Int("input", 14, "Pin used for input")
+	argOutput  *int           = flag.Int("output", 15, "Pin used for output")
+	argProd    *bool          = flag.Bool("prod", false, "Tells server to actully activate pins")
 )
 
 var (
-	button = Button{
-		Input:   rpio.Pin(14),
-		Output:  rpio.Pin(15),
-		Timeout: 20 * time.Second,
-	}
-
+	button    Button
 	startedAt time.Time
 )
 
@@ -43,12 +44,6 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-
-	button.Input.Input()
-	button.Input.PullUp()
-
-	button.Output.Output()
-	button.Output.Low()
 }
 
 func timestamp() time.Time {
@@ -137,45 +132,66 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func main() {
-	global := func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+func global(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		_, password, ok := r.BasicAuth()
-		if ok {
-			// usernameHash := sha256.Sum256([]byte(username))
-			passwordHash := sha256.Sum256([]byte(password))
-			// expectedUsernameHash := sha256.Sum256([]byte(USERNAME))
-			expectedPasswordHash := sha256.Sum256([]byte(PASSWORD))
+	username, password, ok := r.BasicAuth()
+	if ok {
+		passwordHash := sha256.Sum256([]byte(password))
+		expectedPasswordHash := sha256.Sum256([]byte(*argSecret))
+		match := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
 
-			// usernameMatch := (subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1)
-			passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
-
-			if passwordMatch {
-				w.Header().Set("Press-Timeout", fmt.Sprintf("%f", button.Timeout.Seconds()))
-				http.DefaultServeMux.ServeHTTP(w, r)
-				return
-			}
-
+		if *argUser != "" {
+			usernameHash := sha256.Sum256([]byte(*argUser))
+			expectedUsernameHash := sha256.Sum256([]byte(username))
+			match = match && subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
 		}
 
-		country := r.Header.Get("Cf-Ipcountry")
-		if country == "" {
-			country = "unknown"
+		if match {
+			w.Header().Set("Press-Timeout", fmt.Sprintf("%f.2f", button.Timeout.Seconds()))
+			http.DefaultServeMux.ServeHTTP(w, r)
+			return
 		}
 
-		ip := r.Header.Get("Cf-Connecting-Ip")
-		if ip == "" {
-			ip = r.Header.Get("X-Forwarded-For")
-		}
-		if ip == "" {
-			ip = "unknown ip"
-		}
-
-		log.Printf("Attempted access from %s (%s)\n", ip, country)
-		w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	}
+
+	country := r.Header.Get("Cf-Ipcountry")
+	if country == "" {
+		country = "unknown"
+	}
+
+	ip := r.Header.Get("Cf-Connecting-Ip")
+	if ip == "" {
+		ip = r.Header.Get("X-Forwarded-For")
+	}
+	if ip == "" {
+		ip = "unknown ip"
+	}
+
+	log.Printf("Attempted access from %s (%s)\n", ip, country)
+	w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+}
+
+func main() {
+	flag.Parse()
+
+	if *argSecret == "" {
+		log.Fatalln("secret must be supplied")
+	}
+
+	button = Button{
+		Input:      rpio.Pin(*argInput),
+		Output:     rpio.Pin(*argOutput),
+		Production: *argProd,
+		Timeout:    *argTimeout,
+	}
+
+	button.Input.Input()
+	button.Input.PullUp()
+
+	button.Output.Output()
+	button.Output.Low()
 
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
@@ -208,6 +224,10 @@ func main() {
 	<-sigs
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	err = rpio.Close()
+	if err != nil {
+		panic(err)
+	}
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("HTTP shutdown error: %v", err)

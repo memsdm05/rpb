@@ -21,6 +21,7 @@ type Button struct {
 	Input           rpio.Pin
 	Output          rpio.Pin
 	Timeout         time.Duration
+	Production      bool
 	LastButtonPress ButtonPress
 
 	pendingPress ButtonPress
@@ -45,7 +46,7 @@ func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
 
 	ctx, b.cancel = context.WithTimeout(ctx, b.Timeout)
 	b.pressing = true
-	if PROD {
+	if b.Production {
 		b.Output.High()
 	}
 	log.Println("Button press")
@@ -72,7 +73,7 @@ func (b *Button) Release() (ButtonPress, error) {
 	}
 
 	b.pressing = false
-	if PROD {
+	if b.Production {
 		b.Output.Low()
 	}
 	elapsed := time.Since(b.pendingPress.PressedAt).Round(time.Millisecond)

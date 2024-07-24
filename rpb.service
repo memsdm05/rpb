@@ -1,0 +1,14 @@
+[Unit]
+Description=Remote Power Button v3
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=3
+User=bnbro
+ExecStart=/home/bnbro/go/bin/rpb --user 
+
+[Install]
+WantedBy=multi-user.target
