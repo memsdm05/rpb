@@ -1,14 +1,16 @@
 FROM golang:1.22.5-alpine AS build
 
-WORKDIR /app
+ENV CGO_ENABLED=1
 
-RUN apk add --update gcc musl-dev
+RUN apk add --no-cache gcc musl-dev
+
+WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
 COPY . .
-RUN go build -v -o rpb ./...
+RUN go build -ldflags='-s -w -extldflags "-static"' -v -o rpb ./...
     
 FROM alpine:latest
 
