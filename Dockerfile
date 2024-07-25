@@ -10,7 +10,7 @@ COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
 COPY . .
-RUN go build -ldflags='-s -w -extldflags "-static"' -v -o rpb ./...
+RUN go build -v -o rpb ./...
     
 FROM alpine:latest
 

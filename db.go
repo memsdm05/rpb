@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS press (
 	id INTEGER PRIMARY KEY,
 	source TEXT,
 	pressed_at TEXT,
-	elapsed REAL,
+	elapsed INTEGER,
 	start_state INTEGER,
 	end_state INTEGER
 );
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS access (
 
 CREATE TABLE IF NOT EXISTS startup (
 	started_at TEXT,
-	timeout REAL,
+	timeout INTEGER,
 	input_pin INTEGER,
 	output_pin INTEGER,
 );

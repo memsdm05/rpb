@@ -191,8 +191,12 @@ func global(w http.ResponseWriter, r *http.Request) {
 }
 
 func stateRunner() {
+	ticker := time.NewTicker(200 * time.Millisecond)
 	for {
+		select {
+		case <-ticker.C:
 
+		}
 	}
 }
 
