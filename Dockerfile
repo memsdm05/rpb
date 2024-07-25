@@ -2,13 +2,13 @@ FROM golang:1.22.5-alpine AS build
 
 WORKDIR /app
 
-COPY . .
-
 RUN apk add --update gcc musl-dev
 
-RUN go mod download
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 
-RUN go build -v -o rpb .
+COPY . .
+RUN go build -v -o rpb ./...
     
 FROM alpine:latest
 
