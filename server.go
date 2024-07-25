@@ -203,6 +203,7 @@ func stateRunner() {
 func main() {
 	flag.Parse()
 	db = CreateDb()
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 

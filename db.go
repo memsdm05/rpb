@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS startup (
 	started_at TEXT,
 	timeout INTEGER,
 	input_pin INTEGER,
-	output_pin INTEGER,
+	output_pin INTEGER
 );
 `
 
