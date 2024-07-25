@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,16 @@ import (
 //go:embed static/*
 var content embed.FS
 
+var config = struct {
+	DBPath     string
+	Secret     string
+	Addr       string
+	Timeout    time.Duration
+	PinInput   int
+	PinOutput  int
+	Production bool
+}{}
+
 var (
 	argDb      *string        = flag.String("db", "/var/rpb/rpb.db", "Where the database is")
 	argSecret  *string        = flag.String("secret", "", "Login password (required)")
@@ -37,6 +48,7 @@ var (
 var (
 	button    Button
 	startedAt time.Time
+	db        *sql.DB
 )
 
 func init() {
@@ -50,10 +62,14 @@ func timestamp() time.Time {
 	return time.Now().UTC().Round(time.Millisecond)
 }
 
-func jsonError(w http.ResponseWriter, code int, err error) {
+func jsonResp(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(v)
+}
+
+func jsonError(w http.ResponseWriter, code int, err error) {
+	jsonResp(w, code, map[string]string{
 		"error": err.Error(),
 	})
 	log.Printf("Caught error: %s", err.Error())
@@ -62,6 +78,7 @@ func jsonError(w http.ResponseWriter, code int, err error) {
 func handlePress(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	query := r.URL.Query()
+
 	t := query.Get("t")
 	wait := query.Has("wait")
 
@@ -71,6 +88,7 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if t != "" {
+		wait = true
 		seconds, err := strconv.ParseFloat(t, 64)
 		if err != nil {
 			jsonError(w, http.StatusBadRequest, err)
@@ -95,10 +113,11 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wait {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(<-done)
+		jsonResp(w, http.StatusOK, <-done)
 	} else {
-		w.WriteHeader(http.StatusAccepted)
+		jsonResp(w, http.StatusAccepted, map[string]float64{
+			"timeout": button.Timeout.Seconds(),
+		})
 	}
 }
 
@@ -109,12 +128,10 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(bp)
+	jsonResp(w, http.StatusOK, bp)
 }
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	bp := &button.LastButtonPress
 	if bp.Elapsed == 0 {
 		bp = nil
@@ -132,7 +149,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		LastPress:    bp,
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	jsonResp(w, http.StatusOK, resp)
 }
 
 func handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +170,6 @@ func global(w http.ResponseWriter, r *http.Request) {
 			http.DefaultServeMux.ServeHTTP(w, r)
 			return
 		}
-
 	}
 
 	country := r.Header.Get("Cf-Ipcountry")
@@ -174,8 +190,15 @@ func global(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
+func stateRunner() {
+	for {
+
+	}
+}
+
 func main() {
 	flag.Parse()
+	db = CreateDb()
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
