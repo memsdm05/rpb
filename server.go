@@ -235,7 +235,7 @@ func main() {
 
 	srv := &http.Server{
 		Handler: http.HandlerFunc(global),
-		Addr:    ":5000",
+		Addr:    *argAddr,
 	}
 
 	go func() {
