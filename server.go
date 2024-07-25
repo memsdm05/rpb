@@ -25,7 +25,7 @@ import (
 var content embed.FS
 
 var (
-	argUser    *string        = flag.String("user", "", "Login user")
+	argDb      *string        = flag.String("db", "/var/rpb/rpb.db", "Where the database is")
 	argSecret  *string        = flag.String("secret", "", "Login password (required)")
 	argAddr    *string        = flag.String("addr", ":5000", "Address to bind to")
 	argTimeout *time.Duration = flag.Duration("timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
@@ -65,8 +65,12 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 	t := query.Get("t")
 	wait := query.Has("wait")
 
+	source, _, _ := r.BasicAuth()
+	if source == "" {
+		source = "unknown"
+	}
+
 	if t != "" {
-		wait = true
 		seconds, err := strconv.ParseFloat(t, 64)
 		if err != nil {
 			jsonError(w, http.StatusBadRequest, err)
@@ -84,7 +88,7 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 
-	done, err := button.Press(ctx)
+	done, err := button.Press(source, ctx)
 	if err != nil {
 		jsonError(w, http.StatusTeapot, err)
 		return
@@ -109,13 +113,6 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(bp)
 }
 
-type statusResp struct {
-	On           bool         `json:"on"`
-	Pressed      bool         `json:"pressed"`
-	RunningSince time.Time    `json:"running_since"`
-	LastPress    *ButtonPress `json:"last_press"`
-}
-
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	bp := &button.LastButtonPress
@@ -123,29 +120,33 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		bp = nil
 	}
 
-	resp := statusResp{
+	resp := struct {
+		On           bool         `json:"on"`
+		Pressed      bool         `json:"pressed"`
+		RunningSince time.Time    `json:"running_since"`
+		LastPress    *ButtonPress `json:"last_press"`
+	}{
 		On:           button.IsOn(),
 		Pressed:      button.IsPressed(),
 		RunningSince: startedAt,
 		LastPress:    bp,
 	}
+
 	json.NewEncoder(w).Encode(resp)
+}
+
+func handleHistory(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "come again later")
 }
 
 func global(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	username, password, ok := r.BasicAuth()
+	_, password, ok := r.BasicAuth()
 	if ok {
 		passwordHash := sha256.Sum256([]byte(password))
 		expectedPasswordHash := sha256.Sum256([]byte(*argSecret))
 		match := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
-
-		if *argUser != "" {
-			usernameHash := sha256.Sum256([]byte(*argUser))
-			expectedUsernameHash := sha256.Sum256([]byte(username))
-			match = match && subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
-		}
 
 		if match {
 			w.Header().Set("Press-Timeout", fmt.Sprintf("%f.2f", button.Timeout.Seconds()))
@@ -175,8 +176,13 @@ func global(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	if *argSecret == "" {
+		*argSecret = os.Getenv("RPB_SECRET")
+	}
+	if *argSecret == "" || *argSecret == "<INSERT SECRET HERE>" {
 		log.Fatalln("secret must be supplied")
 	}
 
@@ -186,20 +192,18 @@ func main() {
 		Production: *argProd,
 		Timeout:    *argTimeout,
 	}
-
-	button.Input.Input()
-	button.Input.PullUp()
-
-	button.Output.Output()
-	button.Output.Low()
+	button.Setup()
 
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
 		panic(err)
 	}
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	http.Handle("GET /", http.FileServerFS(sub))
+	http.HandleFunc("GET /status", handleStatus)
+	http.HandleFunc("POST /press", handlePress)
+	http.HandleFunc("POST /release", handleRelease)
+	http.HandleFunc("GET /history", handleHistory)
 
 	srv := &http.Server{
 		Handler: http.HandlerFunc(global),
@@ -213,21 +217,13 @@ func main() {
 		log.Println("Stopped serving new connections")
 	}()
 
-	http.Handle("GET /", http.FileServerFS(sub))
-	http.HandleFunc("GET /status", handleStatus)
-	http.HandleFunc("POST /press", handlePress)
-	http.HandleFunc("POST /release", handleRelease)
-
 	log.Println("Server online")
 	startedAt = timestamp()
 
 	<-sigs
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	err = rpio.Close()
-	if err != nil {
-		panic(err)
-	}
+	defer rpio.Close()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("HTTP shutdown error: %v", err)

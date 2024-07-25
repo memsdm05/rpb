@@ -11,6 +11,7 @@ import (
 )
 
 type ButtonPress struct {
+	Source     string    `json:"source"`
 	PressedAt  time.Time `json:"pressed_at"`
 	Elapsed    float64   `json:"elapsed"`
 	StartState bool      `json:"start_state"`
@@ -31,6 +32,14 @@ type Button struct {
 	mu           sync.RWMutex
 }
 
+func (b *Button) Setup() {
+	button.Input.Input()
+	button.Input.PullUp()
+
+	button.Output.Output()
+	button.Output.Low()
+}
+
 func (b *Button) IsPressed() bool {
 	return b.pressing
 }
@@ -39,7 +48,7 @@ func (b *Button) IsOn() bool {
 	return b.Input.Read() == rpio.High
 }
 
-func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
+func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, error) {
 	if b.IsPressed() {
 		return nil, errors.New("button already pressed")
 	}
@@ -52,6 +61,7 @@ func (b *Button) Press(ctx context.Context) (<-chan ButtonPress, error) {
 	log.Println("Button press")
 	b.doneChan = make(chan ButtonPress, 1)
 	b.pendingPress = ButtonPress{
+		Source:     source,
 		PressedAt:  timestamp(),
 		StartState: b.IsOn(),
 	}
