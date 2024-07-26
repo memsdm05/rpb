@@ -10,6 +10,7 @@ import (
 )
 
 type ButtonPress struct {
+	Id         int64     `json:"number,omitempty"`
 	Source     string    `json:"source"`
 	PressedAt  time.Time `json:"pressed_at"`
 	Elapsed    float64   `json:"elapsed"`
@@ -31,15 +32,13 @@ type Button struct {
 }
 
 func (b *Button) Setup() {
-	if !config.Production {
-		return
+	if config.Production {
+		button.Input.Input()
+		button.Input.PullUp()
+
+		button.Output.Output()
+		button.Output.Low()
 	}
-
-	button.Input.Input()
-	button.Input.PullUp()
-
-	button.Output.Output()
-	button.Output.Low()
 }
 
 func (b *Button) IsPressed() bool {
@@ -63,7 +62,7 @@ func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, 
 	if b.Production {
 		b.Output.High()
 	}
-	log.Println("Button press")
+	log.Printf("Button press by %s\n", source)
 	b.doneChan = make(chan ButtonPress, 1)
 	b.pendingPress = ButtonPress{
 		Source:     source,
@@ -92,12 +91,26 @@ func (b *Button) Release() (ButtonPress, error) {
 		b.Output.Low()
 	}
 	elapsed := time.Since(b.pendingPress.PressedAt).Round(time.Millisecond)
-	log.Printf("Button release after %s\n", elapsed)
 
 	b.pendingPress.Elapsed = elapsed.Seconds()
 	b.pendingPress.EndState = b.IsOn()
-	b.LastButtonPress = b.pendingPress
 
+	res, err := db.Exec(
+		`INSERT INTO press (source, pressed_at, elapsed, start_state, end_state) VALUES (?, ?, ?, ?, ?)`,
+		b.pendingPress.Source,
+		b.pendingPress.PressedAt,
+		b.pendingPress.Elapsed,
+		b.pendingPress.StartState,
+		b.pendingPress.EndState,
+	)
+	if err != nil {
+		panic(err)
+	}
+	b.pendingPress.Id, _ = res.LastInsertId()
+
+	log.Printf("Button release #%d after %s\n", b.pendingPress.Id, elapsed)
+
+	b.LastButtonPress = b.pendingPress
 	b.doneChan <- b.LastButtonPress
 	close(b.doneChan)
 	b.cancel()

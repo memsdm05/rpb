@@ -49,12 +49,12 @@ func init() {
 	}
 
 	flag.StringVar(&config.Secret, "secret", "", "Login password (required)")
-	flag.StringVar(&config.DBPath, "db", "rpb.db", "Where the database is")
+	flag.StringVar(&config.DBPath, "db", "./rpb.db", "Where the database is")
 	flag.StringVar(&config.Addr, "addr", ":5000", "Address to bind to")
-	flag.DurationVar(&config.Timeout, "timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
 	flag.IntVar(&config.PinInput, "input", 14, "Pin used for input")
 	flag.IntVar(&config.PinOutput, "output", 15, "Pin used for output")
 	flag.BoolVar(&config.Production, "prod", false, "Tells server to actually activate pins")
+	flag.DurationVar(&config.Timeout, "timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
 }
 
 func timestamp() time.Time {
@@ -158,7 +158,7 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 func global(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	_, password, ok := r.BasicAuth()
+	username, password, ok := r.BasicAuth()
 	if ok {
 		passwordHash := sha256.Sum256([]byte(password))
 		expectedPasswordHash := sha256.Sum256([]byte(config.Secret))
@@ -168,34 +168,45 @@ func global(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Press-Timeout", fmt.Sprintf("%f.2f", button.Timeout.Seconds()))
 			http.DefaultServeMux.ServeHTTP(w, r)
 			return
+		} else {
+			country := r.Header.Get("Cf-Ipcountry")
+			if country == "" {
+				country = "unknown"
+			}
+
+			ip := r.Header.Get("Cf-Connecting-Ip")
+			if ip == "" {
+				ip = r.Header.Get("X-Forwarded-For")
+			}
+			if ip == "" {
+				ip = "unknown ip"
+			}
+
+			db.Exec(
+				`INSERT INTO bad_access (timestamp, ip, country, username, password) VALUES (?, ?, ?, ?, ?)`,
+				timestamp(), ip, country, username, password,
+			)
+
+			log.Printf("Attempted access from %s (%s)\n", ip, country)
 		}
 	}
-
-	country := r.Header.Get("Cf-Ipcountry")
-	if country == "" {
-		country = "unknown"
-	}
-
-	ip := r.Header.Get("Cf-Connecting-Ip")
-	if ip == "" {
-		ip = r.Header.Get("X-Forwarded-For")
-	}
-	if ip == "" {
-		ip = "unknown ip"
-	}
-
-	log.Printf("Attempted access from %s (%s)\n", ip, country)
 	w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
-func stateRunner() {
-	ticker := time.NewTicker(200 * time.Millisecond)
+func stateWatcher() {
+	state := button.IsOn()
 	for {
-		select {
-		case <-ticker.C:
+		current := button.IsOn()
+		if current != state {
+			db.Exec(
+				`INSERT INTO state (changed_at, is_on, during_press) VALUES (?, ?, ?)`,
+				timestamp(), current, button.IsPressed(),
+			)
 
+			state = current
 		}
+		time.Sleep(300 * time.Millisecond)
 	}
 }
 
@@ -220,6 +231,7 @@ func main() {
 		Timeout:    config.Timeout,
 	}
 	button.Setup()
+	go stateWatcher()
 
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
@@ -237,6 +249,21 @@ func main() {
 		Addr:    config.Addr,
 	}
 
+	log.Println("Server online")
+	startedAt = timestamp()
+
+	_, err = db.Exec(
+		`INSERT INTO startup (started_at, timeout, input_pin, output_pin, prod) VALUES (?, ?, ?, ?, ?)`,
+		startedAt,
+		button.Timeout.Seconds(),
+		config.PinInput,
+		config.PinOutput,
+		button.Production,
+	)
+	if err != nil {
+		panic(err)
+	}
+
 	go func() {
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("HTTP server error: %v", err)
@@ -244,13 +271,14 @@ func main() {
 		log.Println("Stopped serving new connections")
 	}()
 
-	log.Println("Server online")
-	startedAt = timestamp()
-
 	<-sigs
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	defer rpio.Close()
+	defer db.Close()
+	if button.Production {
+		defer rpio.Close()
+	}
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("HTTP shutdown error: %v", err)

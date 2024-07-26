@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -12,18 +11,19 @@ CREATE TABLE IF NOT EXISTS press (
 	id INTEGER PRIMARY KEY,
 	source TEXT,
 	pressed_at TEXT,
-	elapsed INTEGER,
+	elapsed REAL,
 	start_state INTEGER,
 	end_state INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS state (
 	changed_at TEXT,
-	state INTEGER,
-	due_to_press INTEGER
+	is_on INTEGER,
+	during_press INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS access (
+CREATE TABLE IF NOT EXISTS bad_access (
+	timestamp TEXT,
 	ip TEXT,
 	country TEXT,
 	username TEXT,
@@ -32,17 +32,18 @@ CREATE TABLE IF NOT EXISTS access (
 
 CREATE TABLE IF NOT EXISTS startup (
 	started_at TEXT,
-	timeout INTEGER,
+	timeout REAL,
 	input_pin INTEGER,
-	output_pin INTEGER
+	output_pin INTEGER,
+	prod INTEGER
 );
 `
 
-func CreateDb(path string) *sql.DB {
-	if path != ":memory:" {
-		os.Create(path)
-	}
+var (
+	InsertPress *sql.Stmt
+)
 
+func CreateDb(path string) *sql.DB {
 	var err error
 	db, err = sql.Open("sqlite3", path)
 	if err != nil {
