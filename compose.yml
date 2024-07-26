@@ -5,7 +5,7 @@ services:
     environment:
       - RPB_SECRET=${RPB_SECRET}
     ports:
-      - "5000:5000"
+      - 5000:5000
     volumes:
       - type: bind
         source: /dev/mem
@@ -16,6 +16,7 @@ services:
       - type: bind
         source: /proc/device-tree/soc/ranges
         target: /proc/device-tree/soc/ranges
-      - rpb-db:/app/rpb.db
+      - rpb-db:./app/rpb.db
+  
 volumes:
   rpb-db:
