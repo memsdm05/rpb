@@ -1,6 +1,7 @@
 services:
   rpb:
     build: .
+    restart: unless-stopped
     command: -prod
     environment:
       - RPB_SECRET=${RPB_SECRET}
@@ -16,4 +17,4 @@ services:
       - type: bind
         source: /proc/device-tree/soc/ranges
         target: /proc/device-tree/soc/ranges
-      - $(PWD)/rpb.db:/app/rpb.db
+      - $(pwd)/rpb.db:/app/rpb.db
