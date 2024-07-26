@@ -9,10 +9,10 @@ services:
       - 5000:5000
     volumes:
       - data:/app/data
+      - /proc/device-tree/soc/ranges:/proc/device-tree/soc/ranges
     devices:
       - /dev/mem:/dev/mem
       - /dev/gpiomem:/dev/gpiomem
-      - /proc/device-tree/soc/ranges:/proc/device-tree/soc/ranges
 
 volumes:
   data:
