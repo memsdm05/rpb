@@ -203,6 +203,11 @@ func stateWatcher() {
 				`INSERT INTO state (changed_at, is_on, during_press) VALUES (?, ?, ?)`,
 				timestamp(), current, button.IsPressed(),
 			)
+			if current {
+				log.Println("State is now on")
+			} else {
+				log.Println("State is now off")
+			}
 
 			state = current
 		}
