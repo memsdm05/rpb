@@ -8,8 +8,8 @@ Type=simple
 Restart=always
 RestartSec=3
 User=bnbro
-ExecStart=/home/bnbro/go/bin/rpb -prod
-Enviroment="RPB_SECRET=<INSERT SECRET HERE>"
+ExecStart=/usr/local/bin/rpb -prod
+#Enviroment="RPB_SECRET=<INSERT SECRET HERE>"
 
 [Install]
 WantedBy=multi-user.target
