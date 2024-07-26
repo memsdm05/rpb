@@ -39,10 +39,6 @@ CREATE TABLE IF NOT EXISTS startup (
 );
 `
 
-var (
-	InsertPress *sql.Stmt
-)
-
 func CreateDb(path string) *sql.DB {
 	var err error
 	db, err = sql.Open("sqlite3", path)

@@ -40,18 +40,25 @@ func (b *Button) Setup() {
 		button.Output.Low()
 	}
 
-	rows, err := db.Query("SELECT (id, source, pressed_at, elapsed, start_state, end_state) FROM press ORDER BY id DESC LIMIT 1")
+	var pressedAt string
+	err := db.QueryRow(
+		"SELECT id, source, pressed_at, elapsed, start_state, end_state FROM press ORDER BY id DESC LIMIT 1",
+	).Scan(
+		&b.LastButtonPress.Id,
+		&b.LastButtonPress.Source,
+		&pressedAt,
+		&b.LastButtonPress.Elapsed,
+		&b.LastButtonPress.StartState,
+		&b.LastButtonPress.EndState,
+	)
+	b.LastButtonPress.PressedAt, _ = time.Parse("2006-01-02 15:04:05.000-07:00", pressedAt)
+
 	if err != nil {
+		log.Printf("Error during last pressed load: %s", err)
 		return
 	}
-	rows.Scan(
-		b.LastButtonPress.Id,
-		b.LastButtonPress.Source,
-		b.LastButtonPress.PressedAt,
-		b.LastButtonPress.Elapsed,
-		b.LastButtonPress.StartState,
-		b.LastButtonPress.EndState,
-	)
+
+	log.Printf("Last press: %+v\n", b.LastButtonPress)
 }
 
 func (b *Button) IsPressed() bool {
