@@ -1,20 +1,18 @@
 services:
-  rpb:
+  server:
     build: .
     restart: unless-stopped
-    command: -prod
+    command: -prod -db /app/data/rpb.db
     environment:
       - RPB_SECRET=${RPB_SECRET}
     ports:
       - 5000:5000
     volumes:
-      - type: bind
-        source: /dev/mem
-        target: /dev/mem
-      - type: bind
-        source: /dev/gpiomem
-        target: /dev/gpiomem
-      - type: bind
-        source: /proc/device-tree/soc/ranges
-        target: /proc/device-tree/soc/ranges
-      - $(pwd)/rpb.db:/app/rpb.db
+      - data:/app/data
+    devices:
+      - /dev/mem:/dev/mem
+      - /dev/gpiomem:/dev/gpiomem
+      - /proc/device-tree/soc/ranges:/proc/device-tree/soc/ranges
+
+volumes:
+  data:

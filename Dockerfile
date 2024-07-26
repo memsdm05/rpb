@@ -17,5 +17,6 @@ FROM alpine:latest
 
 COPY --from=build /app/rpb /app/rpb
 WORKDIR /app
+RUN mkdir data
 
 ENTRYPOINT [ "./rpb" ]
