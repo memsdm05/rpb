@@ -39,6 +39,19 @@ func (b *Button) Setup() {
 		button.Output.Output()
 		button.Output.Low()
 	}
+
+	rows, err := db.Query("SELECT (id, source, pressed_at, elapsed, start_state, end_state) FROM press ORDER BY id DESC LIMIT 1")
+	if err != nil {
+		return
+	}
+	rows.Scan(
+		b.LastButtonPress.Id,
+		b.LastButtonPress.Source,
+		b.LastButtonPress.PressedAt,
+		b.LastButtonPress.Elapsed,
+		b.LastButtonPress.StartState,
+		b.LastButtonPress.EndState,
+	)
 }
 
 func (b *Button) IsPressed() bool {
