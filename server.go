@@ -36,16 +36,6 @@ var config = struct {
 }{}
 
 var (
-	argDb      *string        = flag.String("db", "/var/rpb/rpb.db", "Where the database is")
-	argSecret  *string        = flag.String("secret", "", "Login password (required)")
-	argAddr    *string        = flag.String("addr", ":5000", "Address to bind to")
-	argTimeout *time.Duration = flag.Duration("timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
-	argInput   *int           = flag.Int("input", 14, "Pin used for input")
-	argOutput  *int           = flag.Int("output", 15, "Pin used for output")
-	argProd    *bool          = flag.Bool("prod", false, "Tells server to actually activate pins")
-)
-
-var (
 	button    Button
 	startedAt time.Time
 	db        *sql.DB
@@ -54,8 +44,17 @@ var (
 func init() {
 	err := rpio.Open()
 	if err != nil {
-		panic(err)
+		config.Production = false
+		log.Println("Cannot connect to gpio memory, turning off production mode")
 	}
+
+	flag.StringVar(&config.Secret, "secret", "", "Login password (required)")
+	flag.StringVar(&config.DBPath, "db", "rpb.db", "Where the database is")
+	flag.StringVar(&config.Addr, "addr", ":5000", "Address to bind to")
+	flag.DurationVar(&config.Timeout, "timeout", 20*time.Second, "Maximum time a server waits before releasing a button")
+	flag.IntVar(&config.PinInput, "input", 14, "Pin used for input")
+	flag.IntVar(&config.PinOutput, "output", 15, "Pin used for output")
+	flag.BoolVar(&config.Production, "prod", false, "Tells server to actually activate pins")
 }
 
 func timestamp() time.Time {
@@ -162,7 +161,7 @@ func global(w http.ResponseWriter, r *http.Request) {
 	_, password, ok := r.BasicAuth()
 	if ok {
 		passwordHash := sha256.Sum256([]byte(password))
-		expectedPasswordHash := sha256.Sum256([]byte(*argSecret))
+		expectedPasswordHash := sha256.Sum256([]byte(config.Secret))
 		match := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
 
 		if match {
@@ -202,23 +201,23 @@ func stateRunner() {
 
 func main() {
 	flag.Parse()
-	db = CreateDb()
+	db = CreateDb(config.DBPath)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	if *argSecret == "" {
-		*argSecret = os.Getenv("RPB_SECRET")
+	if config.Secret == "" {
+		config.Secret = os.Getenv("RPB_SECRET")
 	}
-	if *argSecret == "" || *argSecret == "<INSERT SECRET HERE>" {
+	if config.Secret == "" || config.Secret == "<INSERT SECRET HERE>" {
 		log.Fatalln("secret must be supplied")
 	}
 
 	button = Button{
-		Input:      rpio.Pin(*argInput),
-		Output:     rpio.Pin(*argOutput),
-		Production: *argProd,
-		Timeout:    *argTimeout,
+		Input:      rpio.Pin(config.PinInput),
+		Output:     rpio.Pin(config.PinOutput),
+		Production: config.Production,
+		Timeout:    config.Timeout,
 	}
 	button.Setup()
 
@@ -235,7 +234,7 @@ func main() {
 
 	srv := &http.Server{
 		Handler: http.HandlerFunc(global),
-		Addr:    *argAddr,
+		Addr:    config.Addr,
 	}
 
 	go func() {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -37,9 +38,13 @@ CREATE TABLE IF NOT EXISTS startup (
 );
 `
 
-func CreateDb() *sql.DB {
+func CreateDb(path string) *sql.DB {
+	if path != ":memory:" {
+		os.Create(path)
+	}
+
 	var err error
-	db, err = sql.Open("sqlite3", *argDb)
+	db, err = sql.Open("sqlite3", path)
 	if err != nil {
 		panic(err)
 	}

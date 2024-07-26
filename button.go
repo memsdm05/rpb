@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/stianeikeland/go-rpio/v4"
@@ -29,10 +28,13 @@ type Button struct {
 	pressing     bool
 	doneChan     chan ButtonPress
 	cancel       context.CancelFunc
-	mu           sync.RWMutex
 }
 
 func (b *Button) Setup() {
+	if !config.Production {
+		return
+	}
+
 	button.Input.Input()
 	button.Input.PullUp()
 
@@ -45,7 +47,10 @@ func (b *Button) IsPressed() bool {
 }
 
 func (b *Button) IsOn() bool {
-	return b.Input.Read() == rpio.High
+	if b.Production {
+		return b.Input.Read() == rpio.High
+	}
+	return true
 }
 
 func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, error) {
