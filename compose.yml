@@ -1,10 +1,24 @@
 services:
   rpb:
     build: .
+    command: -prod
     ports:
       - "5000:5000"
+    volumes:
+      - type: bind
+        source: /dev/mem
+        target: /dev/mem
+      - type: bind
+        source: /dev/gpiomem
+        target: /dev/gpiomem
+      - type: bind
+        source: /proc/device-tree/soc/ranges
+        target: /proc/device-tree/soc/ranges
+      - rpb-db:/app/rpb.db
     develop:
       watch:
         - action: sync
           path: .
           target: /.
+volumes:
+  rpb-db:
