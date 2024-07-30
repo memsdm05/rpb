@@ -40,8 +40,7 @@ CREATE TABLE IF NOT EXISTS startup (
 `
 
 func CreateDb(path string) *sql.DB {
-	var err error
-	db, err = sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		panic(err)
 	}

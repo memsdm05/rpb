@@ -18,6 +18,37 @@ type ButtonPress struct {
 	EndState   bool      `json:"end_state"`
 }
 
+type ActualScanner interface {
+	Scan(...any) error
+}
+
+func ButtonPressFromRow(row ActualScanner) (ButtonPress, error) {
+	var (
+		err       error
+		bp        ButtonPress
+		pressedAt string
+	)
+
+	err = row.Scan(
+		&bp.Id,
+		&bp.Source,
+		&pressedAt,
+		&bp.Elapsed,
+		&bp.StartState,
+		&bp.EndState,
+	)
+	if err != nil {
+		return bp, err
+	}
+
+	bp.PressedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", pressedAt)
+	if err != nil {
+		return bp, err
+	}
+
+	return bp, nil
+}
+
 type Button struct {
 	Input           rpio.Pin
 	Output          rpio.Pin
@@ -32,6 +63,8 @@ type Button struct {
 }
 
 func (b *Button) Setup() {
+	var err error
+
 	if config.Production {
 		button.Input.Input()
 		button.Input.PullUp()
@@ -40,18 +73,9 @@ func (b *Button) Setup() {
 		button.Output.Low()
 	}
 
-	var pressedAt string
-	err := db.QueryRow(
-		"SELECT id, source, pressed_at, elapsed, start_state, end_state FROM press ORDER BY id DESC LIMIT 1",
-	).Scan(
-		&b.LastButtonPress.Id,
-		&b.LastButtonPress.Source,
-		&pressedAt,
-		&b.LastButtonPress.Elapsed,
-		&b.LastButtonPress.StartState,
-		&b.LastButtonPress.EndState,
-	)
-	b.LastButtonPress.PressedAt, _ = time.Parse("2006-01-02 15:04:05.000-07:00", pressedAt)
+	row := db.QueryRow(
+		"SELECT id, source, pressed_at, elapsed, start_state, end_state FROM press ORDER BY id DESC LIMIT 1")
+	b.LastButtonPress, err = ButtonPressFromRow(row)
 
 	if err != nil {
 		log.Printf("Error during last pressed load: %s", err)

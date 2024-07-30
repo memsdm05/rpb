@@ -152,7 +152,26 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHistory(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "come again later")
+	ctx := r.Context()
+	limit, cursor, err := PaginationParams(r, 10)
+	if err != nil {
+		jsonError(w, 400, err)
+	}
+
+	paginator := Paginator[ButtonPress]{
+		Table: "press",
+		Resolver: func(row ActualScanner) (ButtonPress, int, error) {
+			bp, err := ButtonPressFromRow(row)
+			return bp, int(bp.Id), err
+		},
+	}
+
+	page, err := paginator.Paginate(ctx, limit, cursor)
+	if err != nil {
+		jsonError(w, 400, err)
+		return
+	}
+	jsonResp(w, 200, page)
 }
 
 func global(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +230,7 @@ func stateWatcher() {
 
 			state = current
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
