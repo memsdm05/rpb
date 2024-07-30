@@ -6,7 +6,7 @@ services:
     environment:
       - RPB_SECRET=${RPB_SECRET}
     ports:
-      - 8080:5000
+      - 5000:5000
     volumes:
       - ./data:/app/data
       - /proc/device-tree/soc/ranges:/proc/device-tree/soc/ranges
