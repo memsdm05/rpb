@@ -52,15 +52,8 @@ func jsonError(w http.ResponseWriter, code int, err error) {
 func recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-
-			if err := recover().(error); err != nil {
+			if err := recover(); err != nil {
 				log.Printf("Recovery caught error: %s", err)
-				if Config.Production {
-					jsonError(w, http.StatusInternalServerError, errors.New("internal server error"))
-				} else {
-					jsonError(w, http.StatusInternalServerError, fmt.Errorf("internal server error: %s", err))
-				}
-
 			}
 		}()
 
@@ -124,7 +117,7 @@ func setupRoutes(fsys fs.FS) (handler http.Handler) {
 	mux.HandleFunc("GET /history", handleHistory)
 
 	handler = authMiddleware(mux, Config.Secret)
-	// handler = recoveryMiddleware(handler)
+	handler = recoveryMiddleware(handler)
 	handler = corsMiddleware(handler)
 
 	return
