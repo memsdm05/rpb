@@ -4,8 +4,9 @@ import (
 	"embed"
 	"os"
 	"os/signal"
-	"rpb/app"
 	"syscall"
+
+	"github.com/memsdm05/rpb/app"
 )
 
 //go:embed static/*

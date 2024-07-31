@@ -1,4 +1,4 @@
-module rpb
+module github.com/memsdm05/rpb
 
 go 1.22.4
 
