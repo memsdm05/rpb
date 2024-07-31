@@ -1,4 +1,3 @@
-<div style="text-align: center;">
 
 <img src="https://github.com/memsdm05/rpb/blob/master/rpbibi.png?raw=true" width="200"/>
 
@@ -6,8 +5,8 @@
 # Remote Power Button
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/memsdm05/rpb)
 ![GitHub License](https://img.shields.io/github/license/memsdm05/rpb)
+[![Go Report Card](https://goreportcard.com/badge/github.com/memsdm05/rpb)](https://goreportcard.com/report/github.com/memsdm05/rpb)
 
-</div>
 
 Control a power button from **anywhere** in the world!
 
