@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -57,20 +57,24 @@ type Button struct {
 	LastButtonPress ButtonPress
 
 	pendingPress ButtonPress
+	on           bool
 	pressing     bool
-	doneChan     chan ButtonPress
-	cancel       context.CancelFunc
+
+	doneChan chan ButtonPress
+	cancel   context.CancelFunc
 }
 
 func (b *Button) Setup() {
 	var err error
 
-	if config.Production {
+	if Config.Production {
 		button.Input.Input()
 		button.Input.PullUp()
 
 		button.Output.Output()
 		button.Output.Low()
+	} else {
+		b.on = false
 	}
 
 	row := db.QueryRow(
@@ -83,17 +87,46 @@ func (b *Button) Setup() {
 	}
 
 	log.Printf("Last press: %+v\n", b.LastButtonPress)
+
+	go b.stateWatcher()
+}
+
+func (b *Button) stateWatcher() {
+	b.on = b.isOn()
+	for {
+		current := b.isOn()
+		if current != b.on {
+			db.Exec(
+				`INSERT INTO state (changed_at, is_on, during_press) VALUES (?, ?, ?)`,
+				timestamp(), current, b.IsPressed(),
+			)
+
+			if current {
+				log.Println("State is now on")
+			} else {
+				log.Println("State is now off")
+			}
+
+			b.pressing = current
+			b.on = current
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (b *Button) IsPressed() bool {
 	return b.pressing
 }
 
-func (b *Button) IsOn() bool {
+func (b *Button) isOn() bool {
 	if b.Production {
 		return b.Input.Read() == rpio.High
 	}
 	return true
+}
+
+func (b *Button) IsOn() bool {
+	return b.on
 }
 
 func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, error) {

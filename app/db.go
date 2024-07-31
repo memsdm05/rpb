@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"database/sql"
@@ -35,11 +35,11 @@ CREATE TABLE IF NOT EXISTS startup (
 	timeout REAL,
 	input_pin INTEGER,
 	output_pin INTEGER,
-	prod INTEGER
+	prod INTEGERs
 );
 `
 
-func CreateDb(path string) *sql.DB {
+func CreateDB(path string) *sql.DB {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		panic(err)

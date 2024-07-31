@@ -11,7 +11,7 @@ COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
 COPY . .
-RUN --mount=type=cache,target="/root/.cache/go-build" go build -v -o rpb ./...
+RUN --mount=type=cache,target="/root/.cache/go-build" go build -v -o rpb .
     
 FROM alpine:latest
 

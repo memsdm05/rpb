@@ -1,7 +1,8 @@
-package main
+package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,23 +12,25 @@ func PaginationParams(r *http.Request, maxLimit int) (limit, cursor int, err err
 	limit = 100
 	cursor = 0
 	query := r.URL.Query()
+	var limitErr, cursorErr error
 
 	if query.Has("limit") {
-		limit, err = strconv.Atoi(query.Get("limit"))
+		limit, limitErr = strconv.Atoi(query.Get("limit"))
 		if limit > maxLimit {
 			limit = maxLimit
 		}
 	}
 
 	if query.Has("cursor") {
-		cursor, err = strconv.Atoi(query.Get("cursor"))
+		cursor, cursorErr = strconv.Atoi(query.Get("cursor"))
 	}
 
+	err = errors.Join(limitErr, cursorErr)
 	return
 }
 
 type Page[T any] struct {
-	Items       []T  `json:"items"`
+	Items      []T  `json:"items"`
 	Limit      int  `json:"limit"`
 	Cursor     int  `json:"cursor"`
 	NextCursor *int `json:"next_cursor"`
@@ -81,5 +84,4 @@ func (p *Paginator[T]) Paginate(ctx context.Context, limit, cursor int) (Page[T]
 	}
 
 	return page, nil
-
 }

@@ -3,8 +3,7 @@ services:
     build: .
     restart: unless-stopped
     command: -prod -db /app/data/rpb.db
-    environment:
-      - RPB_SECRET=${RPB_SECRET}
+    env_file: .env
     ports:
       - 5000:5000
     volumes:
