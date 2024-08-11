@@ -110,11 +110,18 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 func setupRoutes(fsys fs.FS) (handler http.Handler) {
 	mux := http.NewServeMux()
+
 	mux.Handle("GET /", http.FileServerFS(fsys))
+
 	mux.HandleFunc("GET /status", handleStatus)
+
 	mux.HandleFunc("POST /press", handlePress)
+	mux.HandleFunc("GET /press/history", handlePressHistory)
 	mux.HandleFunc("POST /release", handleRelease)
-	mux.HandleFunc("GET /history", handleHistory)
+
+	mux.HandleFunc("POST /turn/{state}", handleTurn)
+	mux.HandleFunc("GET /state", handleState)
+	mux.HandleFunc("GET /state/history", handleStateHistory)
 
 	handler = authMiddleware(mux, Config.Secret)
 	handler = recoveryMiddleware(handler)
@@ -123,16 +130,27 @@ func setupRoutes(fsys fs.FS) (handler http.Handler) {
 	return
 }
 
-func Start(content embed.FS) {
-	db = CreateDB(Config.DBPath)
+func setupButton() {
+	var backend Backend
+	if Config.Production {
+		backend = &RpioBackend{
+			Input:  rpio.Pin(Config.PinInput),
+			Output: rpio.Pin(Config.PinOutput),
+		}
+	} else {
+		backend = &DummyBackend{}
+	}
 
 	button = Button{
-		Input:      rpio.Pin(Config.PinInput),
-		Output:     rpio.Pin(Config.PinOutput),
-		Production: Config.Production,
-		Timeout:    Config.Timeout,
+		Backend: backend,
+		Timeout: Config.Timeout,
 	}
 	button.Setup()
+}
+
+func Start(content embed.FS) {
+	db = CreateDB(Config.DBPath)
+	setupButton()
 
 	sub, err := fs.Sub(content, "static")
 	if err != nil {
@@ -160,7 +178,7 @@ func Start(content embed.FS) {
 		button.Timeout.Seconds(),
 		Config.PinInput,
 		Config.PinOutput,
-		button.Production,
+		Config.Production,
 	)
 }
 
@@ -168,7 +186,7 @@ func Stop() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	defer db.Close()
-	if button.Production {
+	if Config.Production {
 		defer rpio.Close()
 	}
 

@@ -5,8 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
+
+func getSource(r *http.Request) string {
+	source, _, _ := r.BasicAuth()
+	if source == "" {
+		source = "unknown"
+	}
+	return source
+}
 
 func handlePress(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
@@ -14,11 +23,7 @@ func handlePress(w http.ResponseWriter, r *http.Request) {
 
 	t := query.Get("t")
 	wait := query.Has("wait")
-
-	source, _, _ := r.BasicAuth()
-	if source == "" {
-		source = "unknown"
-	}
+	source := getSource(r)
 
 	if t != "" {
 		wait = true
@@ -85,7 +90,73 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, resp)
 }
 
-func handleHistory(w http.ResponseWriter, r *http.Request) {
+type Packet struct {
+	Id   int
+	i    int
+	data []byte
+}
+
+func (p Packet) Length() int {
+	return len(p.data)
+}
+
+func (p Packet) ReadUint(size int) int {
+	return len(p.data)
+}
+
+func (p Packet) ReadInt(size int) int {
+	return len(p.data)
+}
+
+func handleTurn(w http.ResponseWriter, r *http.Request) {
+	var shouldBeOn bool
+	wait := r.URL.Query().Has("wait")
+	state := strings.ToLower(r.PathValue("state"))
+	source := getSource(r)
+
+	_ = wait
+
+	switch state {
+	case "on":
+		shouldBeOn = true
+	case "off":
+		shouldBeOn = false
+	default:
+		jsonError(w, 400, fmt.Errorf("%s is not a valid state", state))
+		return
+	}
+
+	if shouldBeOn == button.IsOn() {
+		return
+	}
+
+	_, err := button.Press(source, r.Context())
+	if err != nil {
+		jsonError(w, http.StatusTeapot, err)
+		return
+	}
+
+	select {
+	case newState := <-button.OnNewState():
+		jsonResp(w, 200, map[string]bool{"is_on": newState})
+		button.Release()
+	case buttonPress := <-button.OnButtonPress():
+		jsonResp(w, 202, map[string]any{
+			"is_on":        button.IsOn(),
+			"button_press": buttonPress,
+		})
+	}
+}
+
+func handleState(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func handleStateHistory(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func handlePressHistory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, cursor, err := PaginationParams(r, 10)
 	if err != nil {

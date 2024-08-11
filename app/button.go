@@ -5,8 +5,6 @@ import (
 	"errors"
 	"log"
 	"time"
-
-	"github.com/stianeikeland/go-rpio/v4"
 )
 
 type ButtonPress struct {
@@ -50,10 +48,8 @@ func ButtonPressFromRow(row ActualScanner) (ButtonPress, error) {
 }
 
 type Button struct {
-	Input           rpio.Pin
-	Output          rpio.Pin
+	Backend         Backend
 	Timeout         time.Duration
-	Production      bool
 	LastButtonPress ButtonPress
 
 	pendingPress   ButtonPress
@@ -67,22 +63,13 @@ type Button struct {
 func (b *Button) Setup() {
 	var err error
 
-	if Config.Production {
-		button.Input.Input()
-		button.Input.PullUp()
-
-		button.Output.Output()
-		button.Output.Low()
-	} else {
-		b.on = false
-	}
+	b.Backend.Setup()
 
 	b.stateListeners = make([]chan bool, 0)
 
 	row := db.QueryRow(
 		"SELECT id, source, pressed_at, elapsed, start_state, end_state FROM press ORDER BY id DESC LIMIT 1")
 	b.LastButtonPress, err = ButtonPressFromRow(row)
-
 	if err != nil {
 		log.Printf("Error during last pressed load: %s", err)
 		return
@@ -94,7 +81,7 @@ func (b *Button) Setup() {
 }
 
 func (b *Button) stateWatcher() {
-	b.on = b.isOn()
+	b.on = b.Backend.On()
 	var wasOn bool
 	db.QueryRow("SELECT is_on FROM state ORDER BY rowid DESC LIMIT 1").Scan(&wasOn)
 
@@ -103,7 +90,7 @@ func (b *Button) stateWatcher() {
 	}
 
 	for {
-		current := b.isOn()
+		current := b.Backend.On()
 		if current != b.on {
 			db.Exec(
 				`INSERT INTO state (changed_at, is_on, during_press) VALUES (?, ?, ?)`,
@@ -132,13 +119,6 @@ func (b *Button) IsPressed() bool {
 	return b.pressing
 }
 
-func (b *Button) isOn() bool {
-	if b.Production {
-		return b.Input.Read() == rpio.High
-	}
-	return true
-}
-
 func (b *Button) IsOn() bool {
 	return b.on
 }
@@ -149,16 +129,14 @@ func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, 
 	}
 
 	ctx, b.cancel = context.WithTimeout(ctx, b.Timeout)
-	b.pressing = true
-	if b.Production {
-		b.Output.High()
-	}
-	log.Printf("Button press by %s\n", source)
 	b.pendingPress = ButtonPress{
 		Source:     source,
 		PressedAt:  timestamp(),
 		StartState: b.IsOn(),
 	}
+	b.pressing = true
+	b.Backend.High()
+	log.Printf("Button press by %s\n", source)
 
 	go func() {
 		<-ctx.Done()
@@ -177,9 +155,7 @@ func (b *Button) Release() (ButtonPress, error) {
 	}
 
 	b.pressing = false
-	if b.Production {
-		b.Output.Low()
-	}
+	b.Backend.Low()
 	elapsed := time.Since(b.pendingPress.PressedAt).Round(time.Millisecond)
 
 	b.pendingPress.Elapsed = elapsed.Seconds()
