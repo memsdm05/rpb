@@ -56,12 +56,12 @@ type Button struct {
 	Production      bool
 	LastButtonPress ButtonPress
 
-	pendingPress ButtonPress
-	on           bool
-	pressing     bool
-
-	doneChan chan ButtonPress
-	cancel   context.CancelFunc
+	pendingPress   ButtonPress
+	on             bool
+	pressing       bool
+	stateListeners []chan bool
+	pressListeners []chan ButtonPress
+	cancel         context.CancelFunc
 }
 
 func (b *Button) Setup() {
@@ -76,6 +76,8 @@ func (b *Button) Setup() {
 	} else {
 		b.on = false
 	}
+
+	b.stateListeners = make([]chan bool, 0)
 
 	row := db.QueryRow(
 		"SELECT id, source, pressed_at, elapsed, start_state, end_state FROM press ORDER BY id DESC LIMIT 1")
@@ -93,6 +95,13 @@ func (b *Button) Setup() {
 
 func (b *Button) stateWatcher() {
 	b.on = b.isOn()
+	var wasOn bool
+	db.QueryRow("SELECT is_on FROM state ORDER BY rowid DESC LIMIT 1").Scan(&wasOn)
+
+	if b.on == wasOn {
+		log.Println("Server probably crashed or experienced a power outage")
+	}
+
 	for {
 		current := b.isOn()
 		if current != b.on {
@@ -107,7 +116,12 @@ func (b *Button) stateWatcher() {
 				log.Println("State is now off")
 			}
 
-			b.pressing = current
+			for _, c := range b.stateListeners {
+				c <- current
+				close(c)
+			}
+			b.stateListeners = nil
+
 			b.on = current
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -140,7 +154,6 @@ func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, 
 		b.Output.High()
 	}
 	log.Printf("Button press by %s\n", source)
-	b.doneChan = make(chan ButtonPress, 1)
 	b.pendingPress = ButtonPress{
 		Source:     source,
 		PressedAt:  timestamp(),
@@ -155,7 +168,7 @@ func (b *Button) Press(source string, ctx context.Context) (<-chan ButtonPress, 
 		b.Release()
 	}()
 
-	return b.doneChan, nil
+	return b.OnButtonPress(), nil
 }
 
 func (b *Button) Release() (ButtonPress, error) {
@@ -186,11 +199,26 @@ func (b *Button) Release() (ButtonPress, error) {
 	b.pendingPress.Id, _ = res.LastInsertId()
 
 	log.Printf("Button release #%d after %s\n", b.pendingPress.Id, elapsed)
-
 	b.LastButtonPress = b.pendingPress
-	b.doneChan <- b.LastButtonPress
-	close(b.doneChan)
+
+	for _, c := range b.pressListeners {
+		c <- b.LastButtonPress
+		close(c)
+	}
+	b.pressListeners = nil
 	b.cancel()
 
 	return b.LastButtonPress, nil
+}
+
+func (b *Button) OnNewState() <-chan bool {
+	c := make(chan bool, 1)
+	b.stateListeners = append(b.stateListeners, c)
+	return c
+}
+
+func (b *Button) OnButtonPress() <-chan ButtonPress {
+	c := make(chan ButtonPress, 1)
+	b.pressListeners = append(b.pressListeners, c)
+	return c
 }
